@@ -23,6 +23,13 @@ export interface DisasmMenuState {
 	toolBusy: boolean;
 	asmLoading: boolean;
 	hasSelection: boolean;
+	/**
+	 * Whether the disassembly is not the view on screen. When it is not, every
+	 * option is greyed rather than pulled: the menu stays where it was, saying
+	 * what it would offer, instead of vanishing and coming back as the reader
+	 * moves between tabs.
+	 */
+	inactive: boolean;
 	onViewModeChange: (mode: "linear" | "graph") => void;
 	onOptionChange: (key: keyof DisasmViewOptions, value: boolean) => void;
 	onDecompile: () => void;
@@ -40,7 +47,8 @@ export interface DisasmMenuState {
  * code is drawn, what of it is drawn, and then what to do about the function
  * under the cursor. Anything that cannot run right now says so on the item rather
  * than disappearing, because a command that vanishes between two visits is one
- * nobody waits for.
+ * nobody waits for. When the disassembly is not the view on screen, that is what
+ * cannot run: the whole menu greys out and stays put rather than emptying.
  *
  * @example
  * disasmMenuSections({ ...state, hasSelection: false }).at(-1)?.items[0].disabled
@@ -50,6 +58,9 @@ export interface DisasmMenuState {
  * @returns The sections, in the order the menu shows them.
  */
 export function disasmMenuSections(state: DisasmMenuState): MenuSection[] {
+	// Nothing here acts on anything but the disassembly, so when it is not on
+	// screen, none of it can run.
+	const off = state.inactive;
 	return [
 		{
 			label: "Disassembly",
@@ -58,12 +69,14 @@ export function disasmMenuSections(state: DisasmMenuState): MenuSection[] {
 					id: "view-linear",
 					label: "Linear",
 					checked: state.viewMode === "linear",
+					disabled: off,
 					run: () => state.onViewModeChange("linear"),
 				},
 				{
 					id: "view-graph",
 					label: "Graph",
 					checked: state.viewMode === "graph",
+					disabled: off,
 					run: () => state.onViewModeChange("graph"),
 				},
 			],
@@ -74,6 +87,7 @@ export function disasmMenuSections(state: DisasmMenuState): MenuSection[] {
 				id: `filter-${key}`,
 				label,
 				checked: state.viewOptions[key],
+				disabled: off,
 				run: () => state.onOptionChange(key, !state.viewOptions[key]),
 			})),
 		},
@@ -84,6 +98,7 @@ export function disasmMenuSections(state: DisasmMenuState): MenuSection[] {
 					id: "decompile",
 					label: state.decompiling ? "Decompiling…" : "Decompile",
 					disabled:
+						off ||
 						!state.canDecompile ||
 						!state.hasSelection ||
 						state.decompiling,
@@ -92,31 +107,31 @@ export function disasmMenuSections(state: DisasmMenuState): MenuSection[] {
 				{
 					id: "xrefs",
 					label: state.xrefsOpen ? "Hide xrefs" : "Show xrefs",
-					disabled: !state.hasSelection,
+					disabled: off || !state.hasSelection,
 					run: state.onToggleXrefs,
 				},
 				{
 					id: "signature",
 					label: "Generate signature",
-					disabled: !state.hasSelection || state.toolBusy,
+					disabled: off || !state.hasSelection || state.toolBusy,
 					run: state.onGenerateSignature,
 				},
 				{
 					id: "similar",
 					label: "Find similar",
-					disabled: !state.hasSelection || state.toolBusy,
+					disabled: off || !state.hasSelection || state.toolBusy,
 					run: state.onShowSimilar,
 				},
 				{
 					id: "index",
 					label: "Index binary",
-					disabled: state.toolBusy,
+					disabled: off || state.toolBusy,
 					run: state.onIndexBinary,
 				},
 				{
 					id: "reload",
 					label: state.asmLoading ? "Reloading…" : "Reload",
-					disabled: state.asmLoading,
+					disabled: off || state.asmLoading,
 					run: state.onRefresh,
 				},
 			],

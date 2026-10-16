@@ -401,17 +401,16 @@ export function CenterPanel() {
 	// nothing more, and the bar reads it only when a menu is opened — so the
 	// alternative, a store written from an effect, would buy a re-render nobody
 	// asked for.
+	//
+	// Published even when the disassembly is not the tab on screen, with every
+	// option marked inactive: a View menu that emptied itself whenever the reader
+	// looked at Strings would drop out of the bar and slide back in, and a command
+	// that vanishes between two visits is one nobody waits for.
 	useEffect(() => {
-		// Only while the disassembly is the thing on screen: a menu offering to
-		// decompile the function under a cursor that is showing a list of strings
-		// is offering to act on nothing.
-		if (tab !== "disasm") {
-			publishSections(MENU.view, []);
-			return;
-		}
 		publishSections(
 			MENU.view,
 			disasmMenuSections({
+				inactive: tab !== "disasm",
 				viewMode,
 				viewOptions,
 				canDecompile: capabilities?.decompile !== false,

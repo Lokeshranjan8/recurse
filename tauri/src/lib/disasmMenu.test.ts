@@ -36,6 +36,7 @@ function holding(over: Partial<DisasmMenuState> = {}): {
 			toolBusy: false,
 			asmLoading: false,
 			hasSelection: true,
+			inactive: false,
 			onViewModeChange: (mode) => spies[mode](mode),
 			onOptionChange: (key, value) => spies.option(key, value),
 			onDecompile: spies.decompile,
@@ -76,6 +77,21 @@ describe("the disassembly's menus", () => {
 		const { state } = holding();
 		expect(item(state, "Disassembly", "view-linear").checked).toBe(true);
 		expect(item(state, "Disassembly", "view-graph").checked).toBe(false);
+	});
+
+	it("grey out every option while the disassembly is not on screen", () => {
+		// The menu stays in the bar and keeps saying what it offers; only the
+		// items that cannot run right now say so. Emptying it instead would drop
+		// the whole menu out of the bar and slide it back in on the next tab.
+		const { state } = holding({ inactive: true });
+		for (const section of disasmMenuSections(state)) {
+			for (const i of section.items) {
+				expect(i.disabled, i.id).toBe(true);
+			}
+		}
+		// The view it would switch to is still shown, so the menu reads the same
+		// whichever tab it is opened from.
+		expect(item(state, "Disassembly", "view-linear").checked).toBe(true);
 	});
 
 	it("switch the view when picked", () => {

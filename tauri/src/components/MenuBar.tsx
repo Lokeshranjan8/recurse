@@ -1,5 +1,5 @@
 import { House } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
 	DropdownMenu,
@@ -18,6 +18,8 @@ import {
 	groupSections,
 	readSections,
 	sectionsFor,
+	sectionsRevision,
+	subscribeSections,
 	type MenuItem,
 } from "@/lib/menuRegistry";
 
@@ -174,6 +176,11 @@ function Menu({
  * <MenuBar />
  */
 export function MenuBar() {
+	// A panel publishes its menus from an effect, which lands after this bar has
+	// already drawn. Without this the bar would compute its list of menus from an
+	// empty slate, draw once, and never hear that the panel filled it in — so a
+	// menu that is only as present as its publisher would flicker in and out.
+	useSyncExternalStore(subscribeSections, sectionsRevision);
 	const commands = buildCommands();
 	const menus = MENU_ORDER.filter(
 		(menu) => sectionsFor(menu, commands, readSections(menu)).length > 0,

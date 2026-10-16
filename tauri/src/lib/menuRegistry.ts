@@ -68,6 +68,67 @@ export interface MenuCommand {
 let published = new Map<string, MenuSection[]>();
 
 /**
+ * Whoever is watching for a change to what has been published.
+ *
+ * A panel publishes from an effect — after the bar above it has already drawn —
+ * so the bar cannot learn which menus exist by reading during its own render: it
+ * draws once with the old answer and never hears that it changed. The items are
+ * still read when a menu opens; only whether a menu exists has to be current
+ * during render, and that is the one thing this tells the bar about.
+ */
+const listeners = new Set<() => void>();
+
+/**
+ * A counter bumped on every publish.
+ *
+ * `useSyncExternalStore` compares a snapshot by value, so the snapshot is this
+ * number rather than the sections themselves — an array that was replaced but
+ * compares equal by identity would otherwise re-render nothing.
+ */
+let revision = 0;
+
+/**
+ * Watch for changes to what has been published, so the menu bar can re-render
+ * the set of menus it shows. Returns the unsubscribe function.
+ *
+ * ```
+ * const stop = subscribeSections(() => {});
+ * publishSections("View", []); // the listener runs
+ * stop();
+ * ```
+ *
+ * @param listener - Called after every publish or withdraw.
+ * @returns A function that stops the watching.
+ */
+export function subscribeSections(listener: () => void): () => void {
+	listeners.add(listener);
+	return () => {
+		listeners.delete(listener);
+	};
+}
+
+/**
+ * The current publish count, for `useSyncExternalStore` to compare.
+ *
+ * ```
+ * const before = sectionsRevision();
+ * publishSections("View", []); // bumps it
+ * sectionsRevision() > before // => true
+ * ```
+ *
+ * @returns A number that changes whenever the published sections do.
+ */
+export function sectionsRevision(): number {
+	return revision;
+}
+
+/** Tell every listener the published sections changed. */
+function notifySections(): void {
+	revision += 1;
+	for (const listener of listeners) listener();
+}
+
+/**
  * Say what a panel's menus contain, replacing whatever it said last.
  *
  * A panel publishes as often as its own state changes; the bar reads only when a
@@ -87,6 +148,7 @@ let published = new Map<string, MenuSection[]>();
  */
 export function publishSections(menu: string, sections: MenuSection[]): void {
 	published.set(menu, sections);
+	notifySections();
 }
 
 /**
@@ -97,6 +159,7 @@ export function publishSections(menu: string, sections: MenuSection[]): void {
  */
 export function clearSections(): void {
 	published = new Map();
+	notifySections();
 }
 
 /**

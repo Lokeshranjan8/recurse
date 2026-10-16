@@ -6,6 +6,8 @@ import {
 	publishSections,
 	readSections,
 	sectionsFor,
+	sectionsRevision,
+	subscribeSections,
 	type MenuCommand,
 	type MenuItem,
 } from "./menuRegistry";
@@ -73,6 +75,28 @@ describe("the published sections", () => {
 		publishSections("View", [section("Actions")]);
 		clearSections();
 		expect(readSections("View")).toEqual([]);
+	});
+
+	it("tell a watcher when they change, so the bar can redraw its menus", () => {
+		// The bar decides which menus exist during render, but a panel publishes
+		// from an effect after that render. Without the word the bar would draw
+		// once against an empty slate and never hear that View had filled in.
+		const seen = vi.fn();
+		const stop = subscribeSections(seen);
+
+		publishSections("View", [section("Actions")]);
+		clearSections();
+		expect(seen).toHaveBeenCalledTimes(2);
+
+		stop();
+		publishSections("View", [section("Actions")]);
+		expect(seen).toHaveBeenCalledTimes(2);
+	});
+
+	it("bump a revision a snapshot can compare", () => {
+		const before = sectionsRevision();
+		publishSections("View", [section("Actions")]);
+		expect(sectionsRevision()).toBeGreaterThan(before);
 	});
 });
 
