@@ -1,15 +1,10 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 
 import { api } from "@/api";
-import {
-	clearHeaderInfoCache,
-	FunctionHeader,
-} from "@/components/FunctionHeader";
-import { DisasmComment, DisasmInstr, splitComment } from "@/lib/disasm";
-import { fmtAddr } from "@/lib/listingFormat";
-import { cn } from "@/lib/utils";
+import { clearHeaderInfoCache } from "@/components/FunctionHeader";
+import { ListingRowView } from "@/components/ListingRow";
 import { useAnalysisStore } from "@/store/analysisStore";
 import type { Function, ListingRow } from "@/types";
 
@@ -17,109 +12,10 @@ import type { Function, ListingRow } from "@/types";
  * fast scroll does not outrun the fetches. */
 const CHUNK = 256;
 
-/** One listing row's height, matching `--row-h`. The window relies on it being
- * fixed, and measures each rendered row to correct for a non-16px root size. */
+/** One listing row's height, matching the row's fixed `h-[18px]`. The window
+ * places every row from this estimate; only a row that opens a function is
+ * taller, and the virtualizer measures that one. */
 const ROW_H = 18;
-
-/**
- * Group a hex byte string into space-separated pairs, the way Ghidra shows
- * instruction and data bytes: `0f4c3b` becomes `0f 4c 3b`.
- *
- * @param hex - The packed hex string, or null.
- * @returns The bytes separated by single spaces.
- *
- * @example
- * groupBytes("0f4c3b") // => "0f 4c 3b"
- * groupBytes(null)     // => ""
- */
-function groupBytes(hex?: string | null): string {
-	if (!hex) return "";
-	return hex.match(/.{1,2}/g)?.join(" ") ?? "";
-}
-
-/**
- * One row of the listing: a section header, a disassembled instruction, or a
- * run of data bytes.
- *
- * @param props.row - The row to render.
- * @param props.func - Name of the function starting at this row, if any.
- * @param props.active - Whether this row's address is selected.
- * @param props.onGoTo - Called when a named function row is activated.
- * @param props.onSelect - Called with the row's address when it is clicked.
- * @returns The row element.
- */
-const ListingRowView = memo(function ListingRowView({
-	row,
-	func,
-	active,
-	onGoTo,
-	onSelect,
-}: {
-	row: ListingRow;
-	func?: Function | null;
-	active: boolean;
-	onGoTo?: (f: Function) => void;
-	onSelect?: (addr: number) => void;
-}) {
-	if (row.kind === "header") {
-		return (
-			<div className="border-border bg-muted/40 text-asm-number flex h-[18px] items-center border-y px-3 font-mono text-[11px] font-semibold">
-				{row.label ?? "section"}
-			</div>
-		);
-	}
-
-	const text = row.text ?? "";
-	const { instr, comment } =
-		row.kind === "code" ? splitComment(text) : { instr: "", comment: "" };
-
-	return (
-		<>
-			{/* A function opens a region of the listing, marked the way Ghidra
-			    marks it: blank space, the boxed FUNCTION banner, the signature
-			    and its parameter/local storage, then the code. All as `;`
-			    comments, so it reads as a header and not as either a section
-			    band or an instruction. */}
-			{func && <FunctionHeader func={func} onGoTo={onGoTo} />}
-			<div
-				className={cn(
-					// Not `data-row`: its fixed height cannot hold bytes that
-					// wrap to a second line, which is how a long instruction's
-					// bytes stay in one narrow column instead of pushing the
-					// instruction far to the right.
-					"flex min-h-[18px] min-w-max items-center gap-3 py-px pl-3 font-mono whitespace-nowrap",
-					active && "ui-selected border-brand border-l-2 pl-[10px]",
-					"hover:bg-accent/70 cursor-pointer",
-				)}
-				onClick={() => onSelect?.(row.addr)}
-				title={
-					row.kind === "code" ? "Select instruction" : "Select data"
-				}
-			>
-				<span className="text-asm-addr w-[19ch] shrink-0">
-					{fmtAddr(row.addr)}
-				</span>
-				<span className="text-asm-bytes w-[26ch] shrink-0 pr-3 whitespace-pre-wrap">
-					{groupBytes(row.bytes)}
-				</span>
-				{row.kind === "code" ? (
-					<span className="text-foreground">
-						<DisasmInstr text={instr} />
-						<DisasmComment comment={comment} />
-						{typeof row.jump === "number" && (
-							<span className="text-asm-jump">
-								{" "}
-								→ {fmtAddr(row.jump)}
-							</span>
-						)}
-					</span>
-				) : (
-					<span className="text-asm-string">{text}</span>
-				)}
-			</div>
-		</>
-	);
-});
 
 /**
  * The whole-image listing: every mapped section — code, rodata, data, bss — in
@@ -189,6 +85,13 @@ export function ListingView({
 	// TanStack's virtualizer: a hook whose result cannot be memoized, and this
 	// app does not run the React Compiler, so the hazard the rule warns about
 	// cannot occur. Same silence as the function list.
+	//
+	// `directDomUpdates` keeps a scroll from re-rendering the view at all: the
+	// virtualizer writes each row's transform itself and only asks React for a
+	// render when a new row enters the window. `useFlushSync: false` drops the
+	// synchronous render the default would force inside the scroll handler,
+	// which is what makes a fast scroll stutter. Together they move a fast
+	// scroll off React and onto the compositor.
 	// eslint-disable-next-line react-hooks/incompatible-library
 	const virtualizer = useVirtualizer({
 		count: total,
@@ -196,11 +99,23 @@ export function ListingView({
 		estimateSize: () => ROW_H,
 		overscan: 24,
 		scrollMargin,
+		directDomUpdates: true,
+		useFlushSync: false,
 	});
 
 	const items = virtualizer.getVirtualItems();
 	const firstIndex = items.length ? items[0].index : 0;
 	const lastIndex = items.length ? items[items.length - 1].index : 0;
+
+	// The size container the virtualizer writes its height into directly; the
+	// listing also keeps the same node to measure the offset it starts at.
+	const setListRef = useCallback(
+		(node: HTMLDivElement | null) => {
+			listRef.current = node;
+			virtualizer.containerRef(node);
+		},
+		[virtualizer],
+	);
 
 	// Measure a row for the window (its height) and for the list width (its
 	// content), so the bands can span every row. The width only ever grows.
@@ -287,10 +202,11 @@ export function ListingView({
 
 	return (
 		<div
-			ref={listRef}
+			ref={setListRef}
 			className="relative"
 			style={{
-				height: `${virtualizer.getTotalSize()}px`,
+				// The height is owned by `containerRef`, which writes it without
+				// a render; setting it here too would fight that write.
 				// At least the viewport, and wider only when a row is. Sized to
 				// the content alone, a listing whose rows are all narrow stops
 				// short of the panel's edge: the selected-row band and the
@@ -313,7 +229,9 @@ export function ListingView({
 							insetBlockStart: 0,
 							insetInlineStart: 0,
 							width: "100%",
-							transform: `translateY(${item.start - scrollMargin}px)`,
+							// No `transform`: `directDomUpdates` writes each row's
+							// position itself, and an inline transform here would
+							// be overwritten on the next render.
 						}}
 					>
 						{row ? (

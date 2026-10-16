@@ -856,3 +856,54 @@ not in bundle size.
   catalog is the whole of OpenRouter.
 - The one pre-existing lint error, and `DebugCpu.tsx`'s per-step
   `scrollIntoView`.
+
+## Round 2 — the whole-image listing (scrolling the `ls` binary)
+
+The tiers above predate `ListingView`, the whole-image Ghidra-style listing that
+scrolling the `ls` binary exercises. That surface was never audited, and a fast
+up/down scroll of it was the reported stutter. Four bottlenecks, all in the
+scroll path, all fixed:
+
+**L1 — every scroll event forced a synchronous React render.** `useVirtualizer`
+defaults to `useFlushSync: true`, so each scroll frame that changed the visible
+row range called `flushSync(rerender)` *from inside the scroll handler*. That
+blocks the compositor's scroll behind a full React render of the row window.
+`useFlushSync: false` (both `ListingView` and `FunctionList`) lets the browser
+finish the scroll first and React render asynchronously.
+
+**L2 — variable row heights made the window disagree with itself.** The bytes
+column was `w-[26ch] whitespace-pre-wrap`, so any instruction over ~8 bytes
+wrapped onto a second line. The row was then taller than the `18px` estimate,
+and every measured disagreement shifted every row below it while the analyst was
+scrolling — the "smoothness takes a hit" flicker up and down. Rows are now a
+fixed `h-[18px]`, and the byte column is `min-w-[26ch]` so a long instruction
+widens only its own row instead of wrapping. The window places every row from
+one estimate, with no runtime height correction. (Trade-off: a long instruction
+now pulls its instruction text right instead of wrapping its bytes.)
+
+**L3 — scroll-only updates still went through React.** `directDomUpdates: true`
+makes the virtualizer write each row's transform and the container's height
+itself, and only ask React for a render when a new row enters the window.
+Positions move on the compositor, not through reconciliation. The inline
+`transform` and container `height` had to move out of JSX for this — the
+virtualizer owns them now — and the size container gets `virtualizer.containerRef`
+alongside the listing's own offset ref.
+
+**L4 — instruction tokenising ran on every render.** Measured at ~1µs per call,
+so small — but a scroll remounts rows the analyst just passed, re-splitting the
+same strings char by char. `tokenizeAsm` now memoises into a bounded map (cleared
+whole at 4096 entries; a `Token[]` is never mutated, so sharing is safe).
+
+**L5 — the backend re-parsed the object file 256× per scroll window.** In
+`NativeEngine::listing_window`, `annotate_ops` was called once per row, and
+`annotate_ops` calls `self.parse()` (a full `object::File::parse`) and takes the
+state lock. A 256-row window therefore parsed the whole image 256 times and took
+the lock 256 times, per window, while scrolling. The window now decodes every
+code row first, annotates the whole slice in one `annotate_ops` call, then builds
+the rows — one parse and one lock per window. Verified by
+`native::tests::listing_covers_headers_and_code_and_clamps`.
+
+Measured: `tokenizeAsm` 0.95µs/call (~1060k calls/s), so `L4` is a small win and
+`L1`–`L3` and `L5` carry the rest. Still open, and *not* part of this round: the
+`resizable-column.tsx` 60Hz resize re-render of `App`.
+

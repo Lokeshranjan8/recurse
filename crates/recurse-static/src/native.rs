@@ -3256,8 +3256,34 @@ impl Engine for NativeEngine {
         let file = self.parse()?;
         let cs = build_capstone(&file).ok();
         let data = &self.data[..];
+        // Decode every code row first and annotate the whole window in one
+        // `annotate_ops` call. Annotating one row at a time re-parsed the
+        // object file and re-locked the state once per row — a 256-row window
+        // parsed the image 256 times — and `annotate_ops` already takes the
+        // whole slice precisely so this batching can happen.
+        let mut code_ops: Vec<Instruction> = Vec::new();
+        // Position in `code_ops` per entry, or `None` when the entry is not a
+        // code row or did not decode to an instruction.
+        let mut code_pos: Vec<Option<usize>> = vec![None; entries.len()];
+        for (i, entry) in entries.iter().enumerate() {
+            if entry.kind != 0 {
+                continue;
+            }
+            let section = &sections[entry.section as usize];
+            let slice = listing_slice(data, section, entry.addr, entry.len);
+            let mut decoded = match cs.as_ref() {
+                Some(cs) => decode_with(cs, &slice, entry.addr, 1, false, true),
+                None => Vec::new(),
+            };
+            if let Some(op) = decoded.pop() {
+                code_pos[i] = Some(code_ops.len());
+                code_ops.push(op);
+            }
+        }
+        self.annotate_ops(&mut code_ops);
+
         let mut rows = Vec::with_capacity(entries.len());
-        for entry in &entries {
+        for (i, entry) in entries.iter().enumerate() {
             let section = &sections[entry.section as usize];
             match entry.kind {
                 2 => rows.push(ListingRow {
@@ -3270,25 +3296,20 @@ impl Engine for NativeEngine {
                     jump: None,
                     op: None,
                 }),
-                0 => {
-                    let slice = listing_slice(data, section, entry.addr, entry.len);
-                    let mut ops = match cs.as_ref() {
-                        Some(cs) => decode_with(cs, &slice, entry.addr, 1, false, true),
-                        None => Vec::new(),
-                    };
-                    self.annotate_ops(&mut ops);
-                    match ops.into_iter().next() {
-                        Some(op) => rows.push(ListingRow {
-                            addr: op.addr,
-                            kind: "code".to_string(),
-                            size: op.len as u64,
-                            bytes: op.bytes,
-                            text: Some(op.disasm),
-                            label: None,
-                            jump: op.jump,
-                            op: op.kind,
-                        }),
-                        None => rows.push(ListingRow {
+                0 => match code_pos[i].map(|p| &code_ops[p]) {
+                    Some(op) => rows.push(ListingRow {
+                        addr: op.addr,
+                        kind: "code".to_string(),
+                        size: op.len as u64,
+                        bytes: op.bytes.clone(),
+                        text: Some(op.disasm.clone()),
+                        label: None,
+                        jump: op.jump,
+                        op: op.kind.clone(),
+                    }),
+                    None => {
+                        let slice = listing_slice(data, section, entry.addr, entry.len);
+                        rows.push(ListingRow {
                             addr: entry.addr,
                             kind: "code".to_string(),
                             size: entry.len as u64,
@@ -3297,9 +3318,9 @@ impl Engine for NativeEngine {
                             label: None,
                             jump: None,
                             op: None,
-                        }),
+                        });
                     }
-                }
+                },
                 _ => {
                     let slice = listing_slice(data, section, entry.addr, entry.len);
                     let ascii: String = slice

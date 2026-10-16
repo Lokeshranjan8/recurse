@@ -78,6 +78,20 @@ export function isRegister(token: string): boolean {
 }
 
 /**
+ * Memoized results for [`tokenizeAsm`], keyed by the instruction text.
+ *
+ * The listing renders the same instruction from many rows and remounts a row
+ * every time it scrolls back into view, and a control-flow graph renders one
+ * instruction once per block that contains it. Re-splitting the string each
+ * time is a per-character pass over every instruction in view; because a
+ * `Token[]` is never mutated once built, one array can be shared. The map is
+ * dropped wholesale once it passes `TOKEN_CACHE_LIMIT`, which bounds memory
+ * without the bookkeeping of a per-entry LRU.
+ */
+const TOKEN_CACHE = new Map<string, Token[]>();
+const TOKEN_CACHE_LIMIT = 4096;
+
+/**
  * Tokenise one instruction (without its comment) into mnemonic, registers,
  * immediates, and plain text, so the UI can colour them apart.
  *
@@ -87,6 +101,27 @@ export function isRegister(token: string): boolean {
  * ```
  */
 export function tokenizeAsm(instr: string): Token[] {
+	const cached = TOKEN_CACHE.get(instr);
+	if (cached) return cached;
+	const toks = splitAsmTokens(instr);
+	if (TOKEN_CACHE.size >= TOKEN_CACHE_LIMIT) TOKEN_CACHE.clear();
+	TOKEN_CACHE.set(instr, toks);
+	return toks;
+}
+
+/**
+ * The tokeniser behind [`tokenizeAsm`]: one pass over the instruction string,
+ * splitting it at whitespace, identifier runs, and numeric literals. The first
+ * identifier is the mnemonic; later identifiers that name a register are
+ * coloured as one.
+ *
+ * @param instr - The instruction, without its comment.
+ * @returns One token per mnemonic, register, number, or punctuation character.
+ *
+ * @example
+ * splitAsmTokens("ret").map((t) => t.kind); // => ["mnemonic"]
+ */
+function splitAsmTokens(instr: string): Token[] {
 	const toks: Token[] = [];
 	let i = 0;
 	let firstIdent = true;

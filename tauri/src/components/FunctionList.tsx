@@ -291,6 +291,13 @@ export function FunctionList() {
 		getScrollElement: () => scrollRef.current,
 		estimateSize: () => ROW_H,
 		overscan: 12,
+		// Rows are a fixed height, so a scroll needs no re-render: the
+		// virtualizer writes each row's position directly and only asks React
+		// for a render when a new row enters the window. Dropping the
+		// synchronous render the default forces inside the scroll handler is
+		// what keeps a fast scroll from stuttering. See `ListingView`.
+		directDomUpdates: true,
+		useFlushSync: false,
 	});
 
 	return (
@@ -325,9 +332,7 @@ export function FunctionList() {
 						</div>
 					) : (
 						<div
-							style={{
-								height: `${virtualizer.getTotalSize()}px`,
-							}}
+							ref={virtualizer.containerRef}
 							className="relative"
 						>
 							{virtualizer.getVirtualItems().map((row) => {
@@ -343,7 +348,6 @@ export function FunctionList() {
 											insetBlockStart: 0,
 											insetInlineStart: 0,
 											width: "100%",
-											transform: `translateY(${row.start}px)`,
 										}}
 									>
 										<FunctionRow

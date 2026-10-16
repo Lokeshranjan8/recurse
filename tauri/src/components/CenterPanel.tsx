@@ -268,6 +268,19 @@ export function CenterPanel() {
 			? insnSelection.instruction
 			: (selectedAddr ?? null);
 
+	// Stable across the panel's unrelated re-renders — an analysis tick, a
+	// loading flag — so the listing's memoised rows do not all re-render when
+	// only the panel did.
+	const selectListingRow = useCallback(
+		(address: number) => {
+			setInsnSelection({
+				address: selectedAddr ?? address,
+				instruction: address,
+			});
+		},
+		[selectedAddr],
+	);
+
 	const updateViewOption = useCallback(
 		(key: keyof DisasmViewOptions, value: boolean) => {
 			setViewOptions((current) => {
@@ -733,13 +746,7 @@ export function CenterPanel() {
 											selectedAddr={activeInsn}
 											focusAddr={selectedAddr}
 											onGoTo={selectFn}
-											onSelectAddress={(address) =>
-												setInsnSelection({
-													address:
-														selectedAddr ?? address,
-													instruction: address,
-												})
-											}
+											onSelectAddress={selectListingRow}
 										/>
 									</div>
 								</>
