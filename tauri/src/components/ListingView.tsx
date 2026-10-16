@@ -291,7 +291,13 @@ export function ListingView({
 			className="relative"
 			style={{
 				height: `${virtualizer.getTotalSize()}px`,
+				// At least the viewport, and wider only when a row is. Sized to
+				// the content alone, a listing whose rows are all narrow stops
+				// short of the panel's edge: the selected-row band and the
+				// centred FUNCTION banner would end at the content, leaving a
+				// dead margin a selected instruction does not span.
 				width: contentWidth ? `${contentWidth}px` : undefined,
+				minWidth: "100%",
 			}}
 		>
 			{items.map((item) => {
